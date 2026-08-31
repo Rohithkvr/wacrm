@@ -12,7 +12,7 @@ import {
   Check,
   User,
   Tag as TagIcon,
-  DollarSign,
+  IndianRupee,
   StickyNote,
   Plus,
 } from "lucide-react";
@@ -213,7 +213,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           {/* Active Deals */}
           <div>
             <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <DollarSign className="h-3 w-3" />
+              <IndianRupee className="h-3 w-3" />
               {tSidebar("deals")}
             </div>
             <div className="mt-2 space-y-2">
