@@ -228,3 +228,82 @@ html[data-theme="rose"] {
     @apply font-sans;
   }
 }
+
+/* ============================================================
+ * AURORA BACKGROUND — two blurred, drifting color fields used
+ * behind glass surfaces (auth pages, dashboard shell) so the
+ * backdrop-blur/translucency on cards has something to show
+ * through. Pure CSS (no JS, no extra deps): two pseudo-elements
+ * on whichever container gets `.aurora-bg`, contained by that
+ * container's own `overflow-hidden` + `isolate` so they never
+ * leak into surrounding layout or affect its stacking order.
+ * Colors follow the active accent theme (--primary / --chart-2)
+ * so the effect stays correct across every theme + mode.
+ * ============================================================ */
+
+.aurora-bg {
+  position: relative;
+  isolation: isolate;
+}
+
+.aurora-bg::before,
+.aurora-bg::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.35;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.aurora-bg::before {
+  top: -12%;
+  left: -8%;
+  width: 34rem;
+  height: 34rem;
+  background: var(--primary);
+}
+
+.aurora-bg::after {
+  bottom: -18%;
+  right: -8%;
+  width: 30rem;
+  height: 30rem;
+  background: var(--chart-2, var(--primary));
+}
+
+html[data-mode="light"] .aurora-bg::before,
+html[data-mode="light"] .aurora-bg::after {
+  opacity: 0.18;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .aurora-bg::before {
+    animation: aurora-drift-a 22s ease-in-out infinite;
+  }
+  .aurora-bg::after {
+    animation: aurora-drift-b 26s ease-in-out infinite;
+  }
+}
+
+@keyframes aurora-drift-a {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(5%, 8%, 0) scale(1.1);
+  }
+}
+
+@keyframes aurora-drift-b {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-6%, -6%, 0) scale(1.12);
+  }
+}

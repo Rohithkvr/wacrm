@@ -75,8 +75,8 @@ function LoginPageInner() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
+    <div className="aurora-bg relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4">
+      <Card className="w-full max-w-md animate-in fade-in-0 zoom-in-95 border-border bg-card/85 shadow-2xl shadow-black/10 ring-1 ring-foreground/10 backdrop-blur-xl backdrop-saturate-150 duration-500 ease-out">
         <CardHeader className="items-center text-center">
           <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             {inviteToken ? (

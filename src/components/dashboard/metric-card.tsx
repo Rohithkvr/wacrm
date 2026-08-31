@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 
 interface MetricCardProps {
   title: string
-  /** Pre-formatted value for display (e.g. "42" or "$1,250"). */
+  /** Pre-formatted value for display (e.g. "42" or "₹1,250"). */
   value: string
   icon: ComponentType<{ className?: string }>
   /**
@@ -23,10 +23,10 @@ interface MetricCardProps {
 
 export function MetricCard({ title, value, icon: Icon, delta, subtitle }: MetricCardProps) {
   return (
-    <div className="rounded-xl border border-border bg-card p-5">
+    <div className="group rounded-xl border border-border bg-card/80 p-5 shadow-sm shadow-black/5 backdrop-blur-xl backdrop-saturate-150 transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/10">
       <div className="flex items-start justify-between">
         <p className="text-sm font-medium text-muted-foreground">{title}</p>
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors duration-300 group-hover:bg-primary/10 group-hover:text-primary">
           <Icon className="h-4 w-4" />
         </div>
       </div>

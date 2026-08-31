@@ -22,8 +22,8 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "wacrm",
-    template: "%s — wacrm",
+    default: "WhatsApp",
+    template: "%s — WhatsApp",
   },
   description: "Self-hostable CRM template for WhatsApp.",
   robots: {
@@ -38,11 +38,22 @@ export const metadata: Metadata = {
     address: false,
     telephone: false,
   },
+  // "Add to Home Screen" on iOS ignores the web manifest — it reads
+  // these Apple-specific tags instead. `apple-touch-icon` itself is
+  // auto-linked by the src/app/apple-icon.tsx convention above.
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "WhatsApp",
+  },
 };
 
 export const viewport: Viewport = {
   themeColor: "#020617",
   colorScheme: "dark light",
+  // Lets the app fill the notch/home-indicator area edge-to-edge once
+  // installed standalone (iOS) instead of letterboxing at the safe area.
+  viewportFit: "cover",
 };
 
 // Inline boot script — runs before React hydrates so the user's
