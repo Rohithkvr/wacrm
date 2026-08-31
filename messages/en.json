@@ -306,6 +306,11 @@
       "subtitleZero": "Manage your contact list.",
       "customFieldsBtn": "Custom fields",
       "importBtn": "Import",
+      "exportBtn": "Export",
+      "exportSelected": "Export selected",
+      "toastExportSuccess": "Exported {count} {count, plural, =1 {contact} other {contacts}}",
+      "toastExportEmpty": "No contacts to export",
+      "toastExportFailed": "Failed to export contacts",
       "addContactBtn": "Add Contact",
       "searchPlaceholder": "Search by name, phone, or email...",
       "filterByTags": "Filter by tags",
@@ -1583,6 +1588,7 @@
       "fields": "Fields & tags",
       "deals": "Deals & currency",
       "members": "Team members",
+      "roles": "Custom roles",
       "api": "API keys"
     },
     "groups": {

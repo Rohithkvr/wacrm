@@ -306,6 +306,11 @@
       "subtitleZero": "연락처 목록을 관리하세요.",
       "customFieldsBtn": "커스텀 필드",
       "importBtn": "가져오기",
+      "exportBtn": "내보내기",
+      "exportSelected": "선택 항목 내보내기",
+      "toastExportSuccess": "{count}개 연락처를 내보냈습니다",
+      "toastExportEmpty": "내보낼 연락처가 없습니다",
+      "toastExportFailed": "연락처 내보내기에 실패했습니다",
       "addContactBtn": "연락처 추가",
       "searchPlaceholder": "이름, 전화번호, 이메일로 검색...",
       "filterByTags": "태그로 필터링",
@@ -1583,6 +1588,7 @@
       "fields": "필드 & 태그",
       "deals": "딜 & 통화",
       "members": "팀원",
+      "roles": "커스텀 역할",
       "api": "API 키"
     },
     "groups": {

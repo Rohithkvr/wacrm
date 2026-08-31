@@ -39,6 +39,7 @@ import {
   Search,
   Plus,
   Upload,
+  Download,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -57,6 +58,7 @@ import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
+import { buildContactsCsv, downloadCsv } from '@/lib/contacts/export';
 
 const PAGE_SIZE = 25;
 
@@ -89,6 +91,7 @@ export default function ContactsPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Bulk selection (page-scoped — only the loaded rows are selectable)
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -209,17 +212,120 @@ export default function ContactsPage() {
     setLoading(false);
   }, [supabase, page, search, selectedTagIds, tagsMap, t]);
 
+  // Exports leads to a downloadable CSV for marketing tools
+  // (Mailchimp, ad-platform audience upload, a spreadsheet). Exports
+  // whichever rows are currently selected via the bulk checkboxes;
+  // with nothing selected, exports every contact matching the active
+  // search + tag filter (not just the current page) — capped at
+  // EXPORT_ROW_LIMIT so a very large account can't hang the tab on
+  // an unbounded query.
+  const EXPORT_ROW_LIMIT = 5000;
+  async function handleExport() {
+    setExporting(true);
+    try {
+      let rows: Contact[];
+
+      if (selected.size > 0) {
+        const { data, error } = await supabase
+          .from('contacts')
+          .select('*')
+          .in('id', Array.from(selected));
+        if (error) {
+          toast.error(t('toastExportFailed'));
+          return;
+        }
+        rows = data ?? [];
+      } else {
+        const term = search.trim();
+        if (selectedTagIds.length > 0) {
+          const { data, error } = await supabase.rpc('filter_contacts_by_tags', {
+            p_tag_ids: selectedTagIds,
+            p_search: term || null,
+            p_limit: EXPORT_ROW_LIMIT,
+            p_offset: 0,
+          });
+          if (error) {
+            toast.error(t('toastExportFailed'));
+            return;
+          }
+          rows = ((data ?? []) as { contact: Contact }[]).map((r) => r.contact);
+        } else {
+          let query = supabase
+            .from('contacts')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(EXPORT_ROW_LIMIT);
+          if (term) {
+            const like = `%${term}%`;
+            query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
+          }
+          const { data, error } = await query;
+          if (error) {
+            toast.error(t('toastExportFailed'));
+            return;
+          }
+          rows = data ?? [];
+        }
+      }
+
+      if (rows.length === 0) {
+        toast.error(t('toastExportEmpty'));
+        return;
+      }
+
+      const contactIds = rows.map((c) => c.id);
+
+      const [tagsRes, fieldsRes, valuesRes] = await Promise.all([
+        supabase
+          .from('contact_tags')
+          .select('contact_id, tags(*)')
+          .in('contact_id', contactIds),
+        supabase.from('custom_fields').select('id, field_name').order('field_name'),
+        supabase
+          .from('contact_custom_values')
+          .select('contact_id, custom_field_id, value')
+          .in('contact_id', contactIds),
+      ]);
+
+      const tagsByContact: Record<string, Tag[]> = {};
+      (tagsRes.data ?? []).forEach((row) => {
+        const tag = (row as unknown as { contact_id: string; tags: Tag | null }).tags;
+        if (!tag) return;
+        const cid = (row as unknown as { contact_id: string }).contact_id;
+        (tagsByContact[cid] ??= []).push(tag);
+      });
+
+      const customFields = fieldsRes.data ?? [];
+      const customValuesByContact: Record<string, Record<string, string>> = {};
+      (valuesRes.data ?? []).forEach((v) => {
+        const bucket = (customValuesByContact[v.contact_id] ??= {});
+        bucket[v.custom_field_id] = v.value ?? '';
+      });
+
+      const csv = buildContactsCsv(
+        rows.map((c) => ({ ...c, tags: tagsByContact[c.id] ?? [] })),
+        customFields,
+        customValuesByContact,
+      );
+      downloadCsv(`contacts-export-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+      toast.success(t('toastExportSuccess', { count: rows.length }));
+    } catch (err) {
+      console.error('[Contacts] export error:', err);
+      toast.error(t('toastExportFailed'));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
   // synchronously in the effect body, so the cascade the lint rule
   // warns about doesn't apply here.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTags();
   }, [fetchTags]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContacts();
   }, [fetchContacts]);
 
@@ -370,6 +476,19 @@ export default function ContactsPage() {
             <Upload className="size-4" />
             {t('importBtn')}
           </GatedButton>
+          <Button
+            variant="outline"
+            onClick={handleExport}
+            disabled={exporting || totalCount === 0}
+            className="border-border text-muted-foreground hover:bg-muted"
+          >
+            {exporting ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            {t('exportBtn')}
+          </Button>
           <GatedButton
             canAct={canEdit}
             gateReason="add or import contacts"
@@ -512,6 +631,20 @@ export default function ContactsPage() {
               className="text-muted-foreground hover:text-foreground"
             >
               {t('clearSelection')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExport}
+              disabled={exporting}
+              className="border-border text-foreground hover:bg-muted"
+            >
+              {exporting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+              {t('exportSelected')}
             </Button>
             <GatedButton
               variant="destructive"
