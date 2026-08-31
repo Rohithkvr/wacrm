@@ -62,7 +62,14 @@ const EMPTY_FORM: FormState = {
   can_broadcasts_automations: true,
 };
 
-export function CustomRolesPanel() {
+interface CustomRolesPanelProps {
+  /** Called after any create/update/delete so a parent embedding this
+   *  panel (Team members) can refresh its own copy of the roles list
+   *  — e.g. the per-member "Restrict to" picker in the roster. */
+  onRolesChanged?: () => void;
+}
+
+export function CustomRolesPanel({ onRolesChanged }: CustomRolesPanelProps) {
   const t = useTranslations('Settings.customRoles');
   const { canManageMembers, profileLoading } = useAuth();
 
@@ -146,6 +153,7 @@ export function CustomRolesPanel() {
       toast.success(editingRole ? t('updatedToast', { name }) : t('createdToast', { name }));
       setDialogOpen(false);
       await loadRoles();
+      onRolesChanged?.();
     } catch (err) {
       console.error('[CustomRolesPanel] save error:', err);
       toast.error(t('saveError'));
@@ -169,6 +177,7 @@ export function CustomRolesPanel() {
       toast.success(t('deletedToast', { name: deletingRole.name }));
       setRoles((prev) => prev.filter((r) => r.id !== deletingRole.id));
       setDeletingRole(null);
+      onRolesChanged?.();
     } catch (err) {
       console.error('[CustomRolesPanel] delete error:', err);
       toast.error(t('deleteError'));

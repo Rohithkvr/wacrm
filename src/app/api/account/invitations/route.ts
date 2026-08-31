@@ -143,7 +143,7 @@ export async function GET() {
     const { data, error } = await ctx.supabase
       .from("account_invitations")
       .select(
-        "id, role, label, created_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id",
+        "id, role, custom_role_id, label, created_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id",
       )
       .eq("account_id", ctx.accountId)
       .is("accepted_at", null)
@@ -179,7 +179,12 @@ export async function POST(request: Request) {
     if (!limit.success) return rateLimitResponse(limit);
 
     const body = (await request.json().catch(() => null)) as
-      | { role?: unknown; expiresInDays?: unknown; label?: unknown }
+      | {
+          role?: unknown;
+          expiresInDays?: unknown;
+          label?: unknown;
+          customRoleId?: unknown;
+        }
       | null;
 
     const role = body?.role;
@@ -191,6 +196,48 @@ export async function POST(request: Request) {
         { error: "'role' must be one of admin, agent, viewer" },
         { status: 400 },
       );
+    }
+
+    // Custom role only ever means something for an 'agent' invite
+    // (mirrors the DB CHECK added in migration 041, and the same
+    // rule set_member_custom_role enforces post-join). Validate it
+    // belongs to the caller's own account here — this INSERT goes
+    // through the user's RLS-scoped client rather than a SECURITY
+    // DEFINER RPC, so nothing else stops a cross-account id.
+    let customRoleId: string | null = null;
+    if (body?.customRoleId !== undefined && body.customRoleId !== null) {
+      if (typeof body.customRoleId !== "string") {
+        return NextResponse.json(
+          { error: "'customRoleId' must be a string or null" },
+          { status: 400 },
+        );
+      }
+      if (role !== "agent") {
+        return NextResponse.json(
+          { error: "A custom role can only be set on an 'agent' invite" },
+          { status: 400 },
+        );
+      }
+      const { data: roleRow, error: roleErr } = await ctx.supabase
+        .from("custom_roles")
+        .select("id")
+        .eq("id", body.customRoleId)
+        .eq("account_id", ctx.accountId)
+        .maybeSingle();
+      if (roleErr) {
+        console.error("[POST /api/account/invitations] custom role lookup error:", roleErr);
+        return NextResponse.json(
+          { error: "Failed to create invitation" },
+          { status: 500 },
+        );
+      }
+      if (!roleRow) {
+        return NextResponse.json(
+          { error: "Custom role not found" },
+          { status: 400 },
+        );
+      }
+      customRoleId = body.customRoleId;
     }
 
     const expiresInDaysRaw = body?.expiresInDays;
@@ -222,11 +269,12 @@ export async function POST(request: Request) {
         account_id: ctx.accountId,
         token_hash: hash,
         role,
+        custom_role_id: customRoleId,
         created_by_user_id: ctx.userId,
         label,
         expires_at: expiresAt.toISOString(),
       })
-      .select("id, role, label, expires_at, created_at")
+      .select("id, role, custom_role_id, label, expires_at, created_at")
       .single();
 
     if (error || !data) {

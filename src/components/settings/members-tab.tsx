@@ -75,6 +75,7 @@ import {
 import { InviteMemberDialog } from './invite-member-dialog';
 import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
+import { CustomRolesPanel } from './custom-roles-panel';
 import type { CustomRole } from '@/lib/auth/custom-roles';
 
 interface Member {
@@ -198,6 +199,14 @@ export function MembersTab() {
   useEffect(() => {
     void loadEverything();
   }, [loadEverything]);
+
+  const refreshCustomRoles = useCallback(async () => {
+    if (!canManageMembers) return;
+    const res = await fetch('/api/account/custom-roles', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = (await res.json()) as { roles: CustomRole[] };
+    setCustomRoles(data.roles);
+  }, [canManageMembers]);
 
   async function handleRoleChange(member: Member, nextRole: AccountRole) {
     if (member.role === nextRole) return;
@@ -564,6 +573,13 @@ export function MembersTab() {
           </ul>
         </CardContent>
       </Card>
+
+      {/* Custom roles — admin+ only. Merged directly into this tab
+          (no separate Settings section) so role management and the
+          roster that assigns those roles live in one place. */}
+      <RequireRole min="admin">
+        <CustomRolesPanel onRolesChanged={refreshCustomRoles} />
+      </RequireRole>
 
       {/* Pending invitations — admin+ only */}
       <RequireRole min="admin">

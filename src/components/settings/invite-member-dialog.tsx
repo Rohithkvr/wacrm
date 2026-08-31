@@ -14,7 +14,7 @@
 // shouts this in copy.
 // ============================================================
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Copy, Loader2, MessageCircle, Sparkles } from 'lucide-react';
 
@@ -38,8 +38,13 @@ import {
 } from '@/components/ui/select';
 import { useTranslations } from 'next-intl';
 import { useAuth } from '@/hooks/use-auth';
+import type { CustomRole } from '@/lib/auth/custom-roles';
 
 type InviteRole = 'admin' | 'agent' | 'viewer';
+
+/** Sentinel Select value for "no custom role" — mirrors the same
+ *  pattern in members-tab.tsx. */
+const FULL_ACCESS_VALUE = '__full_access__';
 
 interface InviteMemberDialogProps {
   open: boolean;
@@ -80,13 +85,32 @@ export function InviteMemberDialog({
   const [role, setRole] = useState<InviteRole>('agent');
   const [expiry, setExpiry] = useState<string>('7');
   const [label, setLabel] = useState('');
+  const [customRoleId, setCustomRoleId] = useState<string | null>(null);
+  const [customRoles, setCustomRoles] = useState<CustomRole[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<CreatedInvite | null>(null);
+
+  // Custom roles only ever apply to an 'agent' invite (see migration
+  // 041) — fetched once the dialog opens so the picker below is
+  // ready by the time the admin picks "Agent". Silent on failure:
+  // this is a nice-to-have narrowing, not required to send an invite.
+  useEffect(() => {
+    if (!open) return;
+    fetch('/api/account/custom-roles', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { roles: CustomRole[] } | null) => {
+        if (data) setCustomRoles(data.roles);
+      })
+      .catch(() => {
+        // Best-effort — the role select just falls back to "Full access" only.
+      });
+  }, [open]);
 
   function reset() {
     setRole('agent');
     setExpiry('7');
     setLabel('');
+    setCustomRoleId(null);
     setResult(null);
     setSubmitting(false);
   }
@@ -112,6 +136,7 @@ export function InviteMemberDialog({
           role,
           expiresInDays: Number(expiry),
           label: trimmedLabel || undefined,
+          customRoleId: role === 'agent' ? customRoleId : undefined,
         }),
       });
 
@@ -271,7 +296,16 @@ export function InviteMemberDialog({
                 <Label className="text-muted-foreground">{t('roleLabel')}</Label>
                 <Select
                   value={role}
-                  onValueChange={(v) => v && setRole(v as InviteRole)}
+                  onValueChange={(v) => {
+                    if (!v) return;
+                    setRole(v as InviteRole);
+                    // Custom roles only mean something for an agent
+                    // invite — drop any prior selection when the
+                    // admin switches to admin/viewer, otherwise a
+                    // stale choice could silently resurface if they
+                    // switch back.
+                    if (v !== 'agent') setCustomRoleId(null);
+                  }}
                 >
                   <SelectTrigger className="w-full bg-muted border-border text-foreground">
                     <SelectValue>{tRoles(role)}</SelectValue>
@@ -286,6 +320,37 @@ export function InviteMemberDialog({
                   {tRoles(`${role}Hint` as 'adminHint' | 'agentHint' | 'viewerHint')}
                 </p>
               </div>
+
+              {/* Custom-role narrowing — agent invites only, and only
+                  once at least one custom role exists in the account.
+                  See @/lib/auth/custom-roles for what these restrict. */}
+              {role === 'agent' && customRoles.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">{t('restrictToLabel')}</Label>
+                  <Select
+                    value={customRoleId ?? FULL_ACCESS_VALUE}
+                    onValueChange={(v) =>
+                      setCustomRoleId(!v || v === FULL_ACCESS_VALUE ? null : v)
+                    }
+                  >
+                    <SelectTrigger className="w-full bg-muted border-border text-foreground">
+                      <SelectValue>
+                        {customRoles.find((r) => r.id === customRoleId)?.name ??
+                          t('fullAccessOption')}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={FULL_ACCESS_VALUE}>{t('fullAccessOption')}</SelectItem>
+                      {customRoles.map((cr) => (
+                        <SelectItem key={cr.id} value={cr.id}>
+                          {cr.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{t('restrictToHint')}</p>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label className="text-muted-foreground">{t('validForLabel')}</Label>

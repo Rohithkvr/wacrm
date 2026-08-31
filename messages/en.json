@@ -1307,6 +1307,9 @@
       "dialogTitle": "Invite a teammate",
       "dialogDesc": "Generate a one-time invite link. Share it via WhatsApp, Slack, or any channel you like — no email service required.",
       "roleLabel": "Role",
+      "restrictToLabel": "Restrict to",
+      "restrictToHint": "Narrow what this agent can see — create or edit custom roles from Team members.",
+      "fullAccessOption": "Full access",
       "validForLabel": "Link valid for",
       "days1": "1 day",
       "days7": "7 days",
@@ -1588,7 +1591,6 @@
       "fields": "Fields & tags",
       "deals": "Deals & currency",
       "members": "Team members",
-      "roles": "Custom roles",
       "api": "API keys"
     },
     "groups": {
