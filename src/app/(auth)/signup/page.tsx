@@ -144,7 +144,7 @@ function SignupPageInner() {
           <CardDescription className="text-muted-foreground">
             {inviteToken
               ? "Verify your email, then accept the invitation to join your team."
-              : "Get started with WhatsApp"}
+              : "Get started with WhatsApp CRM"}
           </CardDescription>
         </CardHeader>
         <CardContent>

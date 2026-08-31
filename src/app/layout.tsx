@@ -22,8 +22,8 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "WhatsApp",
-    template: "%s — WhatsApp",
+    default: "WhatsApp CRM",
+    template: "%s — WhatsApp CRM",
   },
   description: "Self-hostable CRM template for WhatsApp.",
   robots: {
@@ -44,7 +44,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "WhatsApp",
+    title: "WhatsApp CRM",
   },
 };
 

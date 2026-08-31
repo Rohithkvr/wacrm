@@ -7,8 +7,8 @@ import type { MetadataRoute } from "next";
 // (src/app/icon.tsx) and the sidebar logo.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "WhatsApp",
-    short_name: "WhatsApp",
+    name: "WhatsApp CRM",
+    short_name: "WhatsApp CRM",
     description: "Self-hostable CRM template for WhatsApp.",
     start_url: "/",
     display: "standalone",
