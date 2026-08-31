@@ -42,3 +42,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# supabase CLI local state (linked-project ref, temp files)
+supabase/.temp/
+
+# scratch: concatenated migrations, used only for one-off manual
+# SQL-editor pastes — not a source of truth (supabase/migrations/ is)
+combined_migrations.sql
+
+# claude code local session/config
+.claude/
