@@ -20,6 +20,7 @@ import {
   isAccountRole,
   type AccountRole,
 } from "@/lib/auth/roles";
+import type { CustomRole } from "@/lib/auth/custom-roles";
 
 interface Profile {
   id: string;
@@ -35,6 +36,7 @@ interface Profile {
   beta_features: string[];
   account_id: string | null;
   account_role: AccountRole | null;
+  custom_role_id: string | null;
 }
 
 interface AccountSummary {
@@ -110,6 +112,15 @@ interface AuthContextValue {
   accountId: string | null;
   /** Role within that account. Null while loading. */
   accountRole: AccountRole | null;
+  /**
+   * Admin-assigned custom role narrowing this user's feature access
+   * (migration 040). Only ever set for 'agent'-tier members — null
+   * for owner/admin/viewer, and null for an agent with no custom
+   * role assigned (meaning: unrestricted agent access). Read via
+   * `useFeatureAccess` rather than inline — see
+   * `@/lib/auth/custom-roles`.
+   */
+  customRole: CustomRole | null;
   /** Lightweight account meta — id + name + default_currency. Null while loading. */
   account: AccountSummary | null;
   /** Account default deal currency. Falls back to DEFAULT_CURRENCY
@@ -152,6 +163,7 @@ interface ProfileRow {
   beta_features: string[] | null;
   account_id: string | null;
   account_role: string | null;
+  custom_role_id: string | null;
 }
 
 /**
@@ -163,6 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  const [customRole, setCustomRole] = useState<CustomRole | null>(null);
   const [loading, setLoading] = useState(true);
   // Why the account/role couldn't be established, when it couldn't.
   // Null on the happy path.
@@ -192,7 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const result = await supabase
           .from("profiles")
           .select(
-            "id, full_name, email, avatar_url, role, beta_features, account_id, account_role",
+            "id, full_name, email, avatar_url, role, beta_features, account_id, account_role, custom_role_id",
           )
           .eq("user_id", userId)
           .maybeSingle();
@@ -267,6 +280,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? data.account_role
           : null;
 
+        // Custom role (migration 040) — only ever meaningful for
+        // 'agent'-tier members. A stale reference (role table row
+        // deleted) reads as no restriction via the same defensive
+        // point-lookup pattern as the account fetch above; PostgREST
+        // schema-cache staleness right after this migration applies
+        // degrades the same way (null, not a crash).
+        let customRoleRow: CustomRole | null = null;
+        if (data.custom_role_id) {
+          const { data: role, error: roleErr } = await supabase
+            .from("custom_roles")
+            .select("id, name, can_inbox, can_contacts_pipelines, can_broadcasts_automations")
+            .eq("id", data.custom_role_id)
+            .maybeSingle();
+          if (roleErr) {
+            console.error("[AuthProvider] fetchCustomRole error:", {
+              message: roleErr.message,
+              details: roleErr.details,
+              hint: roleErr.hint,
+              code: roleErr.code,
+            });
+          } else if (role) {
+            customRoleRow = role;
+          }
+        }
+
         setProfile({
           id: data.id,
           full_name: data.full_name,
@@ -280,8 +318,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           beta_features: data.beta_features ?? [],
           account_id: data.account_id ?? null,
           account_role: accountRole,
+          custom_role_id: data.custom_role_id ?? null,
         });
         setAccount(accountRow);
+        setCustomRole(customRoleRow);
         if (!data.account_id || !accountRole) {
           // The row exists but carries no tenancy. Migration 017 made
           // both columns NOT NULL for new signups, so this is a user
@@ -367,6 +407,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         lastFetchedUserIdRef.current = null;
         setProfile(null);
         setAccount(null);
+        setCustomRole(null);
         setProfileLoading(false);
       }
 
@@ -386,6 +427,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
+    setCustomRole(null);
     window.location.href = "/login";
   }, []);
 
@@ -435,6 +477,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         refreshProfile,
         account,
+        customRole,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
         accountStatus,
         accountStatusDetail: statusDetail,
@@ -467,6 +510,7 @@ export function useAuth(): AuthContextValue {
       },
       refreshProfile: async () => {},
       account: null,
+      customRole: null,
       defaultCurrency: DEFAULT_CURRENCY,
       // Outside the provider there is nothing to resolve yet — 'loading'
       // keeps the access alert from firing on, say, the login page.

@@ -75,6 +75,7 @@ import {
 import { InviteMemberDialog } from './invite-member-dialog';
 import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
+import type { CustomRole } from '@/lib/auth/custom-roles';
 
 interface Member {
   user_id: string;
@@ -83,7 +84,12 @@ interface Member {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  custom_role_id: string | null;
 }
+
+/** Sentinel Select value for "no custom role" — Base UI's Select
+ *  can't carry an empty-string or null item value. */
+const FULL_ACCESS_VALUE = '__full_access__';
 
 interface Invitation {
   id: string;
@@ -132,6 +138,7 @@ export function MembersTab() {
 
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [customRoles, setCustomRoles] = useState<CustomRole[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -142,10 +149,13 @@ export function MembersTab() {
 
   const loadEverything = useCallback(async () => {
     try {
-      const [mres, ires] = await Promise.all([
+      const [mres, ires, rres] = await Promise.all([
         fetch('/api/account/members', { cache: 'no-store' }),
         canManageMembers
           ? fetch('/api/account/invitations', { cache: 'no-store' })
+          : Promise.resolve(null),
+        canManageMembers
+          ? fetch('/api/account/custom-roles', { cache: 'no-store' })
           : Promise.resolve(null),
       ]);
 
@@ -167,6 +177,15 @@ export function MembersTab() {
         setInvitations(idata.invitations);
       } else {
         setInvitations([]);
+      }
+
+      if (rres) {
+        if (rres.ok) {
+          const rdata = (await rres.json()) as { roles: CustomRole[] };
+          setCustomRoles(rdata.roles);
+        }
+      } else {
+        setCustomRoles([]);
       }
     } catch (err) {
       console.error('[MembersTab] load error:', err);
@@ -222,6 +241,45 @@ export function MembersTab() {
         ),
       );
       console.error('[MembersTab] role change error:', err);
+      toast.error('Could not reach the server');
+    } finally {
+      setPendingMemberAction(null);
+    }
+  }
+
+  async function handleCustomRoleChange(member: Member, nextCustomRoleId: string | null) {
+    if (member.custom_role_id === nextCustomRoleId) return;
+    const previous = member.custom_role_id;
+    setPendingMemberAction(member.user_id);
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.user_id === member.user_id ? { ...m, custom_role_id: nextCustomRoleId } : m,
+      ),
+    );
+    try {
+      const res = await fetch(`/api/account/members/${member.user_id}/custom-role`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customRoleId: nextCustomRoleId }),
+      });
+      if (!res.ok) {
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.user_id === member.user_id ? { ...m, custom_role_id: previous } : m,
+          ),
+        );
+        const payload = await res.json().catch(() => ({}));
+        toast.error(payload.error || t('customRoleUpdateError'));
+        return;
+      }
+      toast.success(t('customRoleUpdatedToast', { name: member.full_name || t('unnamed') }));
+    } catch (err) {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.user_id === member.user_id ? { ...m, custom_role_id: previous } : m,
+        ),
+      );
+      console.error('[MembersTab] custom role change error:', err);
       toast.error('Could not reach the server');
     } finally {
       setPendingMemberAction(null);
@@ -445,6 +503,40 @@ export function MembersTab() {
                         <RoleIcon className="size-3.5" />
                         {tRoles(member.role)}
                       </span>
+                    )}
+
+                    {/* Custom-role restriction — agent rows only, and
+                        only once at least one custom role exists.
+                        Narrows what this specific agent can see; see
+                        `@/lib/auth/custom-roles`. */}
+                    {canManageMembers && member.role === 'agent' && customRoles.length > 0 && (
+                      <Select
+                        value={member.custom_role_id ?? FULL_ACCESS_VALUE}
+                        onValueChange={(v) =>
+                          handleCustomRoleChange(
+                            member,
+                            !v || v === FULL_ACCESS_VALUE ? null : v,
+                          )
+                        }
+                      >
+                        <SelectTrigger
+                          className="w-40 bg-muted border-border text-foreground"
+                          disabled={isBusy}
+                        >
+                          <SelectValue>
+                            {customRoles.find((r) => r.id === member.custom_role_id)?.name ??
+                              t('fullAccess')}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={FULL_ACCESS_VALUE}>{t('fullAccess')}</SelectItem>
+                          {customRoles.map((role) => (
+                            <SelectItem key={role.id} value={role.id}>
+                              {role.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     )}
 
                     {/* Remove. Admin+ only; never on the owner row;

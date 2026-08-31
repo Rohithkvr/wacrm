@@ -75,6 +75,9 @@ export interface AccountMember {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  /** Admin-assigned custom role narrowing this member's feature
+   *  access (migration 040). Only ever set on 'agent'-tier members. */
+  custom_role_id: string | null;
 }
 
 /**

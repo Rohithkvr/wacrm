@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useTotalUnread } from "@/hooks/use-total-unread";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
+import type { FeatureArea } from "@/lib/auth/custom-roles";
 import {
   Bell,
   Bot,
@@ -87,18 +89,25 @@ interface NavItem {
    * Purely informational — doesn't affect routing or access.
    */
   beta?: boolean;
+  /**
+   * Feature area this row belongs to, for custom-role narrowing
+   * (migration 040). Undefined = always shown (dashboard overview
+   * has no sensitive controls of its own). See
+   * `@/lib/auth/custom-roles`.
+   */
+  feature?: FeatureArea;
 }
 
 const navItems: NavItem[] = [
   { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
-  { href: "/inbox", labelKey: "inbox", icon: MessageSquare },
-  { href: "/notifications", labelKey: "notifications", icon: Bell },
-  { href: "/contacts", labelKey: "contacts", icon: Users },
-  { href: "/pipelines", labelKey: "pipelines", icon: GitBranch },
-  { href: "/broadcasts", labelKey: "broadcasts", icon: Radio },
-  { href: "/automations", labelKey: "automations", icon: Zap },
-  { href: "/flows", labelKey: "flows", icon: Workflow, beta: true },
-  { href: "/agents", labelKey: "aiAgents", icon: Bot },
+  { href: "/inbox", labelKey: "inbox", icon: MessageSquare, feature: "inbox" },
+  { href: "/notifications", labelKey: "notifications", icon: Bell, feature: "inbox" },
+  { href: "/contacts", labelKey: "contacts", icon: Users, feature: "contacts_pipelines" },
+  { href: "/pipelines", labelKey: "pipelines", icon: GitBranch, feature: "contacts_pipelines" },
+  { href: "/broadcasts", labelKey: "broadcasts", icon: Radio, feature: "broadcasts_automations" },
+  { href: "/automations", labelKey: "automations", icon: Zap, feature: "broadcasts_automations" },
+  { href: "/flows", labelKey: "flows", icon: Workflow, beta: true, feature: "broadcasts_automations" },
+  { href: "/agents", labelKey: "aiAgents", icon: Bot, feature: "broadcasts_automations" },
 ];
 
 const bottomNavItems = [
@@ -119,6 +128,20 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const { profile, profileLoading, account, accountRole, signOut } = useAuth();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
+
+  // Custom-role narrowing (migration 040) — computed once per
+  // feature area, then consulted per nav row below.
+  const canInbox = useFeatureAccess("inbox");
+  const canContactsPipelines = useFeatureAccess("contacts_pipelines");
+  const canBroadcastsAutomations = useFeatureAccess("broadcasts_automations");
+  const featureAccess: Record<FeatureArea, boolean> = {
+    inbox: canInbox,
+    contacts_pipelines: canContactsPipelines,
+    broadcasts_automations: canBroadcastsAutomations,
+  };
+  const visibleNavItems = navItems.filter(
+    (item) => !item.feature || featureAccess[item.feature],
+  );
   // Only surface the account-name strip when it actually carries
   // information. A solo user's personal account is named after them
   // (the 017 signup trigger seeds it from `full_name`), so showing it
@@ -208,7 +231,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="flex flex-col gap-1">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive =
                 pathname === item.href ||
                 (item.href !== "/dashboard" && pathname.startsWith(item.href));
