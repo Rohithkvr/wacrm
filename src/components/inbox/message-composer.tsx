@@ -536,7 +536,7 @@ export function MessageComposer({
   // ---- Render --------------------------------------------------------
 
   return (
-    <div className="border-t border-border bg-card p-3">
+    <div className="border-t border-border bg-card p-3 pb-[max(0.75rem,_env(safe-area-inset-bottom,_0px))]">
       {replyTo && (
         <div className="mb-2">
           <ReplyQuote

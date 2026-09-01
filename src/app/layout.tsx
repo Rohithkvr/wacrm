@@ -54,6 +54,15 @@ export const viewport: Viewport = {
   // Lets the app fill the notch/home-indicator area edge-to-edge once
   // installed standalone (iOS) instead of letterboxing at the safe area.
   viewportFit: "cover",
+  // Explicit width/scale so the meta tag is fully formed on iOS.
+  // We do NOT set maximumScale=1 — that would break accessibility
+  // (prevents pinch-zoom for low-vision users).
+  width: "device-width",
+  initialScale: 1,
+  minimumScale: 1,
+  // interactiveWidget: when the virtual keyboard appears, shrink the
+  // viewport rather than overlapping it — keeps the composer in view.
+  interactiveWidget: "resizes-visual",
 };
 
 // Inline boot script — runs before React hydrates so the user's

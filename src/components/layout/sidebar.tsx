@@ -199,11 +199,13 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
       <aside
         className={cn(
           // Mobile: fixed drawer that slides in from the left.
-          "fixed inset-y-0 left-0 z-40 flex h-full w-64 flex-col border-r border-sidebar-border bg-sidebar/85 backdrop-blur-xl backdrop-saturate-150",
+          // pt-safe pushes the logo row below the iOS status bar when the
+          // drawer is open as a PWA overlay. env() → 0 on desktop.
+          "fixed inset-y-0 left-0 z-40 flex h-full w-64 flex-col border-r border-sidebar-border bg-sidebar/85 pt-safe backdrop-blur-xl backdrop-saturate-150",
           "transition-transform duration-200 ease-out will-change-transform",
           open ? "translate-x-0" : "-translate-x-full",
           // Desktop: static, always visible — reset all the mobile framing.
-          "lg:static lg:z-0 lg:w-60 lg:translate-x-0 lg:transition-none",
+          "lg:static lg:z-0 lg:w-60 lg:translate-x-0 lg:pt-0 lg:transition-none",
         )}
         aria-label="Primary"
       >
@@ -317,7 +319,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         </nav>
 
         {/* User section */}
-        <div className="shrink-0 border-t border-sidebar-border p-3">
+        <div className="shrink-0 border-t border-sidebar-border p-3 pb-safe">
           {/* Account name display — surfaced only when the account
               name differs from the user's own name (see
               `showAccountStrip`). For a default solo account the two
