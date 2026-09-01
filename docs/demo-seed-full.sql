@@ -22,12 +22,16 @@
 --      conversation.
 --
 -- STRUCTURE
---   This is split into many small statements (a setup block, then
---   one small block per patient) rather than one giant block, so
---   a paste/editor hiccup can't corrupt the whole script. Run the
---   ENTIRE file in one go — a TEMP TABLE carries the resolved
---   account/pipeline/stage/tag ids from the setup block to each
---   patient block, and only lives for this one session.
+--   The Supabase SQL Editor's "Run" truncates very large pastes
+--   (observed failure around ~6KB submitted in one go) rather than
+--   erroring clearly, which corrupts whatever statement it cuts
+--   through. So: DO NOT paste this whole file and hit Run once.
+--   Instead, copy and run each labeled block below SEPARATELY, in
+--   order, in the SAME SQL Editor tab (a plain table — not a
+--   session-temp one — carries the resolved account/pipeline/
+--   stage/tag ids between blocks, so it survives even if the
+--   editor doesn't reuse one connection across separate Runs).
+--   Each block is a few KB, safely under the size that failed.
 --
 -- SAFETY
 --   - Contacts and conversations are ADDITIVE and idempotent —
@@ -93,7 +97,7 @@ $cleanup$;
 -- SECTION C — SETUP: temp context table, tags, pipeline + stages
 -- ============================================================
 DROP TABLE IF EXISTS _seed_ctx;
-CREATE TEMP TABLE _seed_ctx (
+CREATE TABLE _seed_ctx (
   account_id            UUID,
   user_id               UUID,
   pipeline_id           UUID,
