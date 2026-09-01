@@ -2,7 +2,7 @@
 
 Sample lead records for demoing the WhatsApp CRM patient pipeline, built for a neuropsychiatric hospital: Psychiatry, Neurology, Child & Adolescent Psychiatry, and De-addiction. Each row is one inbound enquiry, structured to match the lead-capture flow fields (Lead ID, Patient Name, Mobile, Age, Gender, Location, Service/Department, Reason for Enquiry, Preferred Contact Method, Preferred Appointment Date/Time, Source, Additional Message).
 
-To load these into the live pipeline, see [demo-seed-neuropsychiatric.sql](demo-seed-neuropsychiatric.sql) — a script you run once in the Supabase SQL Editor. It replaces any existing pipeline data with a fresh "Patient Journey" pipeline seeded with these 10 cases.
+To load these into the live app, see [demo-seed-full.sql](demo-seed-full.sql) — a script you run once in the Supabase SQL Editor. It seeds the full system for these 10 patients: contacts, department/status tags, a clinical note, a realistic WhatsApp message thread per patient, and a fresh "Patient Journey" pipeline with one Patient Case each. Contacts and conversations are additive and safe to re-run; only the pipeline/deals are cleared and rebuilt.
 
 | Lead ID | Date & Time | Patient Name | Mobile Number | Age | Gender | Location | Service / Department | Reason for Enquiry | Preferred Contact Method | Preferred Appointment Date | Preferred Appointment Time | How Did You Hear About Us? | Additional Message |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
