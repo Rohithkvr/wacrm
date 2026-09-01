@@ -21,6 +21,14 @@
 --      seeds one Patient Case per patient, linked to their
 --      conversation.
 --
+-- STRUCTURE
+--   This is split into many small statements (a setup block, then
+--   one small block per patient) rather than one giant block, so
+--   a paste/editor hiccup can't corrupt the whole script. Run the
+--   ENTIRE file in one go — a TEMP TABLE carries the resolved
+--   account/pipeline/stage/tag ids from the setup block to each
+--   patient block, and only lives for this one session.
+--
 -- SAFETY
 --   - Contacts and conversations are ADDITIVE and idempotent —
 --     safe to re-run, and never touches an existing contact's
@@ -33,9 +41,10 @@
 -- ------------------------------------------------------------
 -- EDIT ME: this script targets the Supabase Dashboard's web SQL
 -- Editor, which doesn't support psql \set variables — so use
--- Find & Replace (Ctrl/Cmd+F) to replace every occurrence of
--- YOUR_LOGIN_EMAIL_HERE below with the email you log into the
--- CRM with. There are 3 occurrences total.
+-- Find & Replace (Ctrl/Cmd+F) to replace every occurrence of the
+-- placeholder text below with the email you log into the CRM
+-- with. There are 5 occurrences in the actual SQL (Section A x3,
+-- Section B x1, Section C setup block x1).
 -- ------------------------------------------------------------
 
 -- ============================================================
@@ -60,7 +69,7 @@ SELECT
 -- SECTION B — DELETE existing pipelines/deals for this account
 -- (contacts, tags, notes, and conversations are left untouched)
 -- ============================================================
-DO $$
+DO $cleanup$
 DECLARE
   v_account_id UUID;
 BEGIN
@@ -77,35 +86,47 @@ BEGIN
     SELECT id FROM pipelines WHERE account_id = v_account_id
   );
   DELETE FROM pipelines WHERE account_id = v_account_id;
-END $$;
+END
+$cleanup$;
 
 -- ============================================================
--- SECTION C — FULL SEED: tags, contacts, notes, conversations,
--- messages, pipeline + patient cases
+-- SECTION C — SETUP: temp context table, tags, pipeline + stages
 -- ============================================================
-DO $$
+DROP TABLE IF EXISTS _seed_ctx;
+CREATE TEMP TABLE _seed_ctx (
+  account_id            UUID,
+  user_id               UUID,
+  pipeline_id           UUID,
+  stage_inquiry         UUID,
+  stage_booked          UUID,
+  stage_consulted       UUID,
+  stage_planned         UUID,
+  stage_admitted        UUID,
+  tag_psychiatry        UUID,
+  tag_neurology         UUID,
+  tag_child_psychiatry  UUID,
+  tag_deaddiction       UUID,
+  tag_new_patient       UUID,
+  tag_followup          UUID
+);
+INSERT INTO _seed_ctx DEFAULT VALUES;
+
+DO $setup$
 DECLARE
   v_account_id  UUID;
   v_user_id     UUID;
   v_pipeline_id UUID;
-
   v_stage_inquiry   UUID;
   v_stage_booked    UUID;
   v_stage_consulted UUID;
   v_stage_planned   UUID;
   v_stage_admitted  UUID;
-
   v_tag_psychiatry       UUID;
   v_tag_neurology        UUID;
   v_tag_child_psychiatry UUID;
   v_tag_deaddiction      UUID;
   v_tag_new_patient      UUID;
   v_tag_followup         UUID;
-
-  v_contact_id      UUID;
-  v_conversation_id UUID;
-  v_is_new_contact      BOOLEAN;
-  v_is_new_conversation BOOLEAN;
 BEGIN
   SELECT account_id, user_id INTO v_account_id, v_user_id
   FROM profiles
@@ -115,9 +136,7 @@ BEGIN
     RAISE EXCEPTION 'No account found for that email — check EDIT ME above';
   END IF;
 
-  -- ------------------------------------------------------------
   -- Tags (idempotent — reuse if already created by a prior run)
-  -- ------------------------------------------------------------
   SELECT id INTO v_tag_psychiatry FROM tags WHERE user_id = v_user_id AND name = 'Psychiatry';
   IF v_tag_psychiatry IS NULL THEN
     INSERT INTO tags (user_id, name, color) VALUES (v_user_id, 'Psychiatry', '#8b5cf6') RETURNING id INTO v_tag_psychiatry;
@@ -148,9 +167,7 @@ BEGIN
     INSERT INTO tags (user_id, name, color) VALUES (v_user_id, 'Follow-up', '#22c55e') RETURNING id INTO v_tag_followup;
   END IF;
 
-  -- ------------------------------------------------------------
   -- Pipeline + stages (fresh — Section B already cleared old ones)
-  -- ------------------------------------------------------------
   INSERT INTO pipelines (user_id, account_id, name)
   VALUES (v_user_id, v_account_id, 'Patient Journey')
   RETURNING id INTO v_pipeline_id;
@@ -166,30 +183,47 @@ BEGIN
   INSERT INTO pipeline_stages (pipeline_id, name, color, position) VALUES
     (v_pipeline_id, 'Admitted',           '#22c55e', 4) RETURNING id INTO v_stage_admitted;
 
-  -- ============================================================
-  -- Patient 1 — Anjali Menon, Psychiatry (Anxiety & insomnia)
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919847123456';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+  UPDATE _seed_ctx SET
+    account_id = v_account_id, user_id = v_user_id, pipeline_id = v_pipeline_id,
+    stage_inquiry = v_stage_inquiry, stage_booked = v_stage_booked,
+    stage_consulted = v_stage_consulted, stage_planned = v_stage_planned,
+    stage_admitted = v_stage_admitted,
+    tag_psychiatry = v_tag_psychiatry, tag_neurology = v_tag_neurology,
+    tag_child_psychiatry = v_tag_child_psychiatry, tag_deaddiction = v_tag_deaddiction,
+    tag_new_patient = v_tag_new_patient, tag_followup = v_tag_followup;
+END
+$setup$;
+
+-- ============================================================
+-- Patient 1 — Anjali Menon, Psychiatry (Anxiety & insomnia)
+-- ============================================================
+DO $patient1$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919847123456';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919847123456', 'Anjali Menon')
+    VALUES (ctx.user_id, ctx.account_id, '919847123456', 'Anjali Menon')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_psychiatry) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_new_patient) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_psychiatry) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_new_patient) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Anxiety and sleep%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Anxiety and sleep disturbance for 2 months. Requested a female doctor. WhatsApp is preferred contact method.');
+    VALUES (v_contact_id, ctx.user_id, 'Anxiety and sleep disturbance for 2 months. Requested a female doctor. WhatsApp is preferred contact method.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'open')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'open')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -200,41 +234,48 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'Understood. Dr. Meera is available on 5th Sept morning. Shall I book that slot for you?',
-      last_message_at = NOW() - INTERVAL '1 hour 48 minutes',
-      unread_count = 0
+      last_message_at = NOW() - INTERVAL '1 hour 48 minutes', unread_count = 0
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_inquiry, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_inquiry, v_contact_id, v_conversation_id,
     'Psychiatry Consultation – Anjali Menon', 800, 'INR',
     'Anxiety and sleep disturbance for 2 months. Prefers a female doctor. WhatsApp preferred contact.',
     CURRENT_DATE + 4, 'open');
+END
+$patient1$;
 
-  -- ============================================================
-  -- Patient 2 — Ravi Chandran, Neurology (Epilepsy / seizures)
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919895567234';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+-- ============================================================
+-- Patient 2 — Ravi Chandran, Neurology (Epilepsy / seizures)
+-- ============================================================
+DO $patient2$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919895567234';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919895567234', 'Ravi Chandran')
+    VALUES (ctx.user_id, ctx.account_id, '919895567234', 'Ravi Chandran')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_neurology) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_new_patient) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_neurology) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_new_patient) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Recurrent seizure%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Recurrent seizure episodes over the last month, first-time evaluation. Bringing a prior EEG report.');
+    VALUES (v_contact_id, ctx.user_id, 'Recurrent seizure episodes over the last month, first-time evaluation. Bringing a prior EEG report.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'open')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'open')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -245,41 +286,48 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'Perfect, see you then. Please arrive 15 minutes early for registration.',
-      last_message_at = NOW() - INTERVAL '4 hours 43 minutes',
-      unread_count = 0
+      last_message_at = NOW() - INTERVAL '4 hours 43 minutes', unread_count = 0
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_booked, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_booked, v_contact_id, v_conversation_id,
     'Neurology Consultation – Ravi Chandran', 900, 'INR',
     'Recurrent seizure episodes over the last month, first-time evaluation. Bringing prior EEG report.',
     CURRENT_DATE + 2, 'open');
+END
+$patient2$;
 
-  -- ============================================================
-  -- Patient 3 — Fathima Rasheed, Psychiatry (Postpartum depression)
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919744890123';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+-- ============================================================
+-- Patient 3 — Fathima Rasheed, Psychiatry (Postpartum depression)
+-- ============================================================
+DO $patient3$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919744890123';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919744890123', 'Fathima Rasheed')
+    VALUES (ctx.user_id, ctx.account_id, '919744890123', 'Fathima Rasheed')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_psychiatry) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_followup) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_psychiatry) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_followup) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Postpartum depression%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Postpartum depression, 6 weeks after delivery. Referred by her gynecologist.');
+    VALUES (v_contact_id, ctx.user_id, 'Postpartum depression, 6 weeks after delivery. Referred by her gynecologist.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'open')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'open')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -290,41 +338,48 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'Sure, sharing the treatment plan document now.',
-      last_message_at = NOW() - INTERVAL '23 hours 55 minutes',
-      unread_count = 0
+      last_message_at = NOW() - INTERVAL '23 hours 55 minutes', unread_count = 0
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_consulted, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_consulted, v_contact_id, v_conversation_id,
     'Psychiatry Consultation – Fathima Rasheed', 800, 'INR',
     'Postpartum depression, 6 weeks after delivery. Initial consultation done; awaiting treatment plan.',
     CURRENT_DATE + 6, 'open');
+END
+$patient3$;
 
-  -- ============================================================
-  -- Patient 4 — Arjun Nair, Child & Adolescent Psychiatry (ADHD)
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919633445678';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+-- ============================================================
+-- Patient 4 — Arjun Nair, Child & Adolescent Psychiatry (ADHD)
+-- ============================================================
+DO $patient4$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919633445678';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919633445678', 'Arjun Nair (parent: Sunitha Nair)')
+    VALUES (ctx.user_id, ctx.account_id, '919633445678', 'Arjun Nair (parent: Sunitha Nair)')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_child_psychiatry) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_new_patient) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_child_psychiatry) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_new_patient) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Parents report%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Parents report inattention and hyperactivity at school (age 8). Referred by school counselor for ADHD evaluation.');
+    VALUES (v_contact_id, ctx.user_id, 'Parents report inattention and hyperactivity at school (age 8). Referred by school counselor for ADHD evaluation.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'open')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'open')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -334,41 +389,48 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'He''s 8, very inattentive and hyperactive in class.',
-      last_message_at = NOW() - INTERVAL '2 hours 40 minutes',
-      unread_count = 1
+      last_message_at = NOW() - INTERVAL '2 hours 40 minutes', unread_count = 1
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_inquiry, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_inquiry, v_contact_id, v_conversation_id,
     'Child Psychiatry Consultation – Arjun Nair (age 8)', 750, 'INR',
     'Parents report inattention and hyperactivity at school. Referred by school counselor for ADHD evaluation.',
     CURRENT_DATE + 5, 'open');
+END
+$patient4$;
 
-  -- ============================================================
-  -- Patient 5 — Manoj Pillai, Neurology / Memory Clinic (Dementia)
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919744223344';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+-- ============================================================
+-- Patient 5 — Manoj Pillai, Neurology / Memory Clinic (Dementia)
+-- ============================================================
+DO $patient5$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919744223344';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919744223344', 'Manoj Pillai')
+    VALUES (ctx.user_id, ctx.account_id, '919744223344', 'Manoj Pillai')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_neurology) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_followup) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_neurology) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_followup) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Progressive memory loss%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Progressive memory loss over 6 months, suspected early-stage dementia. MMSE and MRI brain ordered.');
+    VALUES (v_contact_id, ctx.user_id, 'Progressive memory loss over 6 months, suspected early-stage dementia. MMSE and MRI brain ordered.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'pending')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'pending')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -379,41 +441,48 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'Yes, we''ll have it ready at the front desk for your next visit.',
-      last_message_at = NOW() - INTERVAL '1 day 18 hours 55 minutes',
-      unread_count = 0
+      last_message_at = NOW() - INTERVAL '1 day 18 hours 55 minutes', unread_count = 0
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_planned, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_planned, v_contact_id, v_conversation_id,
     'Memory Clinic – Manoj Pillai', 1200, 'INR',
     'Progressive memory loss over 6 months, suspected early-stage dementia. MMSE and MRI brain ordered; treatment plan shared with family.',
     CURRENT_DATE + 10, 'open');
+END
+$patient5$;
 
-  -- ============================================================
-  -- Patient 6 — Priya Varma, Psychiatry (Panic disorder)
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919946778812';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+-- ============================================================
+-- Patient 6 — Priya Varma, Psychiatry (Panic disorder)
+-- ============================================================
+DO $patient6$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919946778812';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919946778812', 'Priya Varma')
+    VALUES (ctx.user_id, ctx.account_id, '919946778812', 'Priya Varma')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_psychiatry) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_new_patient) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_psychiatry) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_new_patient) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Recurrent panic%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Recurrent panic attacks with palpitations, triggered mostly at work. Prefers evening slots after 6 PM.');
+    VALUES (v_contact_id, ctx.user_id, 'Recurrent panic attacks with palpitations, triggered mostly at work. Prefers evening slots after 6 PM.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'open')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'open')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -423,41 +492,48 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'Thank you, evening works best for me.',
-      last_message_at = NOW() - INTERVAL '5 hours 45 minutes',
-      unread_count = 0
+      last_message_at = NOW() - INTERVAL '5 hours 45 minutes', unread_count = 0
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_booked, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_booked, v_contact_id, v_conversation_id,
     'Psychiatry Consultation – Priya Varma', 800, 'INR',
     'Recurrent panic attacks with palpitations, triggered mostly at work. Appointment booked for evening slot.',
     CURRENT_DATE + 3, 'open');
+END
+$patient6$;
 
-  -- ============================================================
-  -- Patient 7 — Sarath Kumar, De-addiction Psychiatry (Alcohol)
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919895667788';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+-- ============================================================
+-- Patient 7 — Sarath Kumar, De-addiction Psychiatry (Alcohol)
+-- ============================================================
+DO $patient7$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919895667788';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919895667788', 'Sarath Kumar')
+    VALUES (ctx.user_id, ctx.account_id, '919895667788', 'Sarath Kumar')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_deaddiction) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_followup) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_deaddiction) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_followup) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Seeking help for alcohol%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Seeking help for alcohol dependence, family-initiated enquiry. Discussing inpatient de-addiction program.');
+    VALUES (v_contact_id, ctx.user_id, 'Seeking help for alcohol dependence, family-initiated enquiry. Discussing inpatient de-addiction program.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'open')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'open')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -468,41 +544,48 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'Typically 2-3 weeks depending on the case. Our counselor will call you to explain in detail.',
-      last_message_at = NOW() - INTERVAL '1 day 1 hour 45 minutes',
-      unread_count = 0
+      last_message_at = NOW() - INTERVAL '1 day 1 hour 45 minutes', unread_count = 0
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_consulted, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_consulted, v_contact_id, v_conversation_id,
     'De-addiction Consultation – Sarath Kumar', 1000, 'INR',
     'Seeking help for alcohol dependence, family-initiated enquiry. Initial consultation complete, discussing inpatient de-addiction program.',
     CURRENT_DATE + 7, 'open');
+END
+$patient7$;
 
-  -- ============================================================
-  -- Patient 8 — Deepa Krishnan, Neurology (Chronic migraine) — Admitted
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919847001122';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+-- ============================================================
+-- Patient 8 — Deepa Krishnan, Neurology (Chronic migraine) — Admitted
+-- ============================================================
+DO $patient8$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919847001122';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919847001122', 'Deepa Krishnan')
+    VALUES (ctx.user_id, ctx.account_id, '919847001122', 'Deepa Krishnan')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_neurology) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_followup) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_neurology) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_followup) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Chronic migraine%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Chronic migraine, 15+ headache days/month. Admitted for a 2-day observation and preventive therapy titration.');
+    VALUES (v_contact_id, ctx.user_id, 'Chronic migraine, 15+ headache days/month. Admitted for a 2-day observation and preventive therapy titration.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'closed')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'closed')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -513,41 +596,48 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'Glad to hear that. Our neurologist will review your progress tomorrow.',
-      last_message_at = NOW() - INTERVAL '23 hours',
-      unread_count = 0
+      last_message_at = NOW() - INTERVAL '23 hours', unread_count = 0
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_admitted, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_admitted, v_contact_id, v_conversation_id,
     'Neurology – Deepa Krishnan', 1500, 'INR',
     'Chronic migraine, 15+ headache days/month, admitted for a 2-day observation and preventive therapy titration.',
     CURRENT_DATE - 1, 'won');
+END
+$patient8$;
 
-  -- ============================================================
-  -- Patient 9 — Vishnu Prasad, Psychiatry (OCD)
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919633009988';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+-- ============================================================
+-- Patient 9 — Vishnu Prasad, Psychiatry (OCD)
+-- ============================================================
+DO $patient9$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919633009988';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919633009988', 'Vishnu Prasad')
+    VALUES (ctx.user_id, ctx.account_id, '919633009988', 'Vishnu Prasad')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_psychiatry) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_new_patient) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_psychiatry) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_new_patient) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Intrusive thoughts%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Intrusive thoughts and repetitive checking behaviour for over a year. Self-referred after reading about OCD online.');
+    VALUES (v_contact_id, ctx.user_id, 'Intrusive thoughts and repetitive checking behaviour for over a year. Self-referred after reading about OCD online.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'open')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'open')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -557,41 +647,48 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'Sure, I''m available this week.',
-      last_message_at = NOW() - INTERVAL '25 minutes',
-      unread_count = 1
+      last_message_at = NOW() - INTERVAL '25 minutes', unread_count = 1
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_inquiry, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_inquiry, v_contact_id, v_conversation_id,
     'Psychiatry Consultation – Vishnu Prasad', 800, 'INR',
     'Intrusive thoughts and repetitive checking behaviour for over a year, self-referred after reading about OCD online.',
     CURRENT_DATE + 8, 'open');
+END
+$patient9$;
 
-  -- ============================================================
-  -- Patient 10 — Sarah Thomas, Neurology (Parkinson's follow-up)
-  -- ============================================================
-  SELECT id INTO v_contact_id FROM contacts WHERE account_id = v_account_id AND phone_normalized = '919846556677';
-  v_is_new_contact := v_contact_id IS NULL;
-  IF v_is_new_contact THEN
+-- ============================================================
+-- Patient 10 — Sarah Thomas, Neurology (Parkinson's follow-up)
+-- ============================================================
+DO $patient10$
+DECLARE
+  ctx RECORD;
+  v_contact_id UUID;
+  v_conversation_id UUID;
+BEGIN
+  SELECT * INTO ctx FROM _seed_ctx;
+
+  SELECT id INTO v_contact_id FROM contacts WHERE account_id = ctx.account_id AND phone_normalized = '919846556677';
+  IF v_contact_id IS NULL THEN
     INSERT INTO contacts (user_id, account_id, phone, name)
-    VALUES (v_user_id, v_account_id, '919846556677', 'Sarah Thomas')
+    VALUES (ctx.user_id, ctx.account_id, '919846556677', 'Sarah Thomas')
     RETURNING id INTO v_contact_id;
   END IF;
 
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_neurology) ON CONFLICT DO NOTHING;
-  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, v_tag_followup) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_neurology) ON CONFLICT DO NOTHING;
+  INSERT INTO contact_tags (contact_id, tag_id) VALUES (v_contact_id, ctx.tag_followup) ON CONFLICT DO NOTHING;
 
   IF NOT EXISTS (SELECT 1 FROM contact_notes WHERE contact_id = v_contact_id AND note_text LIKE 'Existing Parkinson%') THEN
     INSERT INTO contact_notes (contact_id, user_id, note_text)
-    VALUES (v_contact_id, v_user_id, 'Existing Parkinson''s disease patient, medication review and physiotherapy plan being finalized.');
+    VALUES (v_contact_id, ctx.user_id, 'Existing Parkinson''s disease patient, medication review and physiotherapy plan being finalized.');
   END IF;
 
-  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = v_account_id AND contact_id = v_contact_id;
-  v_is_new_conversation := v_conversation_id IS NULL;
-  IF v_is_new_conversation THEN
+  SELECT id INTO v_conversation_id FROM conversations WHERE account_id = ctx.account_id AND contact_id = v_contact_id;
+  IF v_conversation_id IS NULL THEN
     INSERT INTO conversations (user_id, account_id, contact_id, status)
-    VALUES (v_user_id, v_account_id, v_contact_id, 'open')
+    VALUES (ctx.user_id, ctx.account_id, v_contact_id, 'open')
     RETURNING id INTO v_conversation_id;
 
     INSERT INTO messages (conversation_id, sender_type, content_type, content_text, status, created_at) VALUES
@@ -601,15 +698,20 @@ BEGIN
 
     UPDATE conversations SET
       last_message_text = 'Great, thank you for the reminder.',
-      last_message_at = NOW() - INTERVAL '3 days 22 hours 50 minutes',
-      unread_count = 0
+      last_message_at = NOW() - INTERVAL '3 days 22 hours 50 minutes', unread_count = 0
     WHERE id = v_conversation_id;
   END IF;
 
   INSERT INTO deals (user_id, account_id, pipeline_id, stage_id, contact_id, conversation_id, title, value, currency, notes, expected_close_date, status)
-  VALUES (v_user_id, v_account_id, v_pipeline_id, v_stage_planned, v_contact_id, v_conversation_id,
+  VALUES (ctx.user_id, ctx.account_id, ctx.pipeline_id, ctx.stage_planned, v_contact_id, v_conversation_id,
     'Neurology Follow-up – Sarah Thomas', 900, 'INR',
     'Existing Parkinson''s disease patient, medication review and physiotherapy plan being finalized.',
     CURRENT_DATE + 9, 'open');
+END
+$patient10$;
 
-END $$;
+-- ============================================================
+-- Cleanup: drop the temp context table now that all 10 patients
+-- are seeded (harmless to skip — it's session-scoped anyway).
+-- ============================================================
+DROP TABLE IF EXISTS _seed_ctx;
